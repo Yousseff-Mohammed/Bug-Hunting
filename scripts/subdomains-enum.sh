@@ -48,7 +48,10 @@ github-subdomains -d "$DOMAIN" -t "$github_token" -o "$OUTDIR/github-subdomains.
 
 echo "[+] Amass passive"
 amass enum -passive -d "$DOMAIN" -nocolor -o "$EXTRA/amass_raw.txt" || true
-awk '/\(FQDN\)/ {print $1}' "$EXTRA/amass_raw.txt" | sort -u > "$OUTDIR/amass.txt"
+
+awk -v d="$DOMAIN" '/\(FQDN\)/ {print $1}' "$EXTRA/amass_raw.txt" \
+| grep -E "(\.|^)$DOMAIN$" \
+| sort -u > "$OUTDIR/amass.txt"
 
 echo "[+] Combining passive results"
 cat "$OUTDIR"/*.txt 2>/dev/null | sort -u | grep "\.$DOMAIN$" > "$OUTDIR/passive.txt"
