@@ -1,59 +1,86 @@
 #!/bin/bash
+set -e
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 domain.com"
-    exit 1
-fi
+if [ -z "$1" ]; then exit 1; fi
 
 DOMAIN="$1"
 OUTDIR="recon_$DOMAIN"
-EXTRA_INFO_DIR="$OUTDIR/extra-info"
+EXTRA="$OUTDIR/extra-info"
 
-mkdir -p "$OUTDIR"
-mkdir -p "$EXTRA_INFO_DIR"
+WORDLIST="/usr/share/wordlists/SecLists/Discovery/DNS/bug-bounty-program-subdomains-trickest-inventory.txt"
+RESOLVERS="/opt/offensive-tools/recon-tools/massdns/lists/resolvers.txt"
+MASSDNS="massdns"
 
-echo "[+] Running theHarvester..."
-theHarvester -d "$DOMAIN" -b all -f theharvester
-mv theharvester.* "$OUTDIR/" 2>/dev/null
+mkdir -p "$OUTDIR" "$EXTRA"
 
-# Extracting theHarvester JSON data
+echo "[+] theHarvester"
+theHarvester -d "$DOMAIN" -b all -f theharvester || true
+mv theharvester.* "$OUTDIR/" 2>/dev/null || true
+
 HARVEST_JSON="$OUTDIR/theharvester.json"
-
 if [ -f "$HARVEST_JSON" ]; then
-    jq -r '.hosts[]?' "$HARVEST_JSON" | cut -d ':' -f1 | sort -u > "$OUTDIR/theharvester_hosts.txt"
-    jq -r '.emails[]?' "$HARVEST_JSON" | sort -u > "$EXTRA_INFO_DIR/theharvester_emails.txt"
-    jq -r '.asns[]?' "$HARVEST_JSON" | sort -u > "$EXTRA_INFO_DIR/theharvester_asns.txt"
-    jq -r '.ips[]?' "$HARVEST_JSON" | sort -u > "$EXTRA_INFO_DIR/theharvester_ips.txt"
-    jq -r '.interesting_urls[]?' "$HARVEST_JSON" | sort -u > "$EXTRA_INFO_DIR/urls_theharvester.txt"
+echo "[+] Extracting theHarvester data"
+jq -r '.hosts[]?' "$HARVEST_JSON" | cut -d ':' -f1 | sort -u > "$OUTDIR/theharvester_hosts.txt"
+jq -r '.emails[]?' "$HARVEST_JSON" | sort -u > "$EXTRA/theharvester_emails.txt"
+jq -r '.asns[]?' "$HARVEST_JSON" | sort -u > "$EXTRA/theharvester_asns.txt"
+jq -r '.ips[]?' "$HARVEST_JSON" | sort -u > "$EXTRA/theharvester_ips.txt"
+jq -r '.interesting_urls[]?' "$HARVEST_JSON" | sort -u > "$EXTRA/theharvester_urls.txt"
 fi
 
-echo "[+] Running Sublist3r..."
-sublist3r -d "$DOMAIN" -o "$OUTDIR/sublist3r.txt"
+echo "[+] Sublist3r"
+sublist3r -d "$DOMAIN" -o "$OUTDIR/sublist3r.txt" || true
 
-echo "[+] Running Assetfinder..."
+echo "[+] Assetfinder"
 assetfinder --subs-only "$DOMAIN" > "$OUTDIR/assetfinder.txt"
 
-echo "[+] Fetching crt.sh subdomains..."
+echo "[+] Subfinder"
+subfinder -silent -d "$DOMAIN" > "$OUTDIR/subfinder.txt"
+
+echo "[+] Findomain"
+findomain -t "$DOMAIN" -u "$OUTDIR/findomain.txt" || true
+
+echo "[+] crt.sh"
 curl -s "https://crt.sh/?q=%25.$DOMAIN&output=json" \
-| jq -r '.[].name_value' \
-| sed 's/\\n/\n/g' \
-| grep -vF '*.' \
-| sort -u > "$OUTDIR/crtsh.txt"
+| jq -r '.[].name_value' | sed 's/\\n/\n/g' | grep -vF '*.' | sort -u > "$OUTDIR/crtsh.txt"
 
-echo "[+] Running github-subdomains..."
-github-subdomains.py -d "$DOMAIN" 2>/dev/null > "$OUTDIR/github-subdomains.txt"
+echo "[+] Amass passive"
+amass enum -passive -d "$DOMAIN" -nocolor -o "$EXTRA/amass_raw.txt" || true
+awk '/\(FQDN\)/ {print $1}' "$EXTRA/amass_raw.txt" | sort -u > "$OUTDIR/amass.txt"
 
-echo "[+] Running findomain..."
-findomain -t "$DOMAIN" -u "$OUTDIR/findomain.txt"
+echo "[+] Combining passive results"
+cat "$OUTDIR"/*.txt 2>/dev/null | sort -u | grep "\.$DOMAIN$" > "$OUTDIR/passive.txt"
 
-echo "[+] Running Amass..."
-amass enum -passive -d "$DOMAIN" -nocolor -o "$EXTRA_INFO_DIR/amass_raw.txt"
-awk '/\(FQDN\)/ {print $1}' "$EXTRA_INFO_DIR/amass_raw.txt" | sort -u > "$OUTDIR/amass.txt"
+echo "[+] Massdns level 1 bruteforce"
+sed "s/$/.$DOMAIN/" "$WORDLIST" > "$OUTDIR/bruteforce_lvl1.txt"
+$MASSDNS -r "$RESOLVERS" -t A -o S "$OUTDIR/bruteforce_lvl1.txt" | awk '{print $1}' | sed 's/\.$//' | sort -u > "$OUTDIR/massdns_lvl1.txt"
 
-echo "[+] Combining and deduplicating all subdomains..."
-cat "$OUTDIR"/*.txt 2>/dev/null | sort -u > "$OUTDIR/all_subdomains.txt"
+echo "[+] Merging level 1"
+cat "$OUTDIR/passive.txt" "$OUTDIR/massdns_lvl1.txt" | sort -u > "$OUTDIR/level1.txt"
 
-echo "[+] Checking resolvable subdomains..."
-dnsx -l "$OUTDIR/all_subdomains.txt" -silent -a -resp-only > "$OUTDIR/live_subdomains.txt"
+echo "[+] Preparing deep bruteforce"
+head -n 500 "$OUTDIR/level1.txt" > "$OUTDIR/deep_base.txt"
+> "$OUTDIR/deep_candidates.txt"
+while read sub; do awk -v base="$sub" '{print $0"."base}' "$WORDLIST"; done < "$OUTDIR/deep_base.txt" >> "$OUTDIR/deep_candidates.txt"
 
-echo "[+] Done. Output in $OUTDIR"
+echo "[+] Massdns deep bruteforce"
+$MASSDNS -r "$RESOLVERS" -t A -o S "$OUTDIR/deep_candidates.txt" | awk '{print $1}' | sed 's/\.$//' | sort -u > "$OUTDIR/massdns_deep.txt"
+
+echo "[+] Merging deep results"
+cat "$OUTDIR/level1.txt" "$OUTDIR/massdns_deep.txt" | sort -u > "$OUTDIR/all_subs.txt"
+
+echo "[+] Generating permutations (dnsgen)"
+dnsgen "$OUTDIR/all_subs.txt" > "$OUTDIR/permutations.txt" 2>/dev/null || true
+
+echo "[+] Resolving permutations"
+$MASSDNS -r "$RESOLVERS" -t A -o S "$OUTDIR/permutations.txt" | awk '{print $1}' | sed 's/\.$//' | sort -u >> "$OUTDIR/all_subs.txt"
+
+echo "[+] Final dedupe"
+sort -u "$OUTDIR/all_subs.txt" > "$OUTDIR/final_subdomains.txt"
+
+echo "[+] DNS resolution (dnsx)"
+dnsx -l "$OUTDIR/final_subdomains.txt" -silent -a -resp-only > "$OUTDIR/resolved.txt"
+
+echo "[+] HTTP probing (httpx)"
+httpx -l "$OUTDIR/resolved.txt" -silent -title -status-code -tech-detect -server -ip > "$OUTDIR/alive_http.txt"
+
+echo "Recon finished for $DOMAIN"
