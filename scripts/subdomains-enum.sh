@@ -109,10 +109,10 @@ echo "[+] DNS resolution (dnsx)"
 dnsx -l "$OUTDIR/final_subdomains.txt" -silent -a -retry 3 -resp-only > "$OUTDIR/dnsx_ips.txt"
 
 echo "[+] HTTP probing (httpx)"
-httpx -l "$OUTDIR/final_subdomains.txt" -silent -title -status-code -tech-detect -server -ip > "$OUTDIR/alive_http.txt"
+httpx -l "$OUTDIR/final_subdomains.txt" -silent -title -status-code -tech-detect -server -ip > "$OUTDIR/alive_httpx.txt"
 
 echo "[+] Extracting IPs for port scan"
-grep -oP '\[(?:\d{1,3}\.){3}\d{1,3}\]' "$OUTDIR/alive_http.txt" | tr -d '[]' | sort -u > "$OUTDIR/httpx_ips.txt"
+grep -oP '\[(?:\d{1,3}\.){3}\d{1,3}\]' "$OUTDIR/alive_httpx.txt" | tr -d '[]' | sort -u > "$OUTDIR/httpx_ips.txt"
 
 cat "$OUTDIR/httpx_ips.txt" "$OUTDIR/dnsx_ips.txt" | sort -u > "$OUTDIR/final_ips.txt"
 rm "$OUTDIR/httpx_ips.txt" "$OUTDIR/dnsx_ips.txt"
