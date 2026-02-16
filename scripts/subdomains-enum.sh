@@ -13,7 +13,8 @@ if [ -z "$github_token" ]; then
 fi
 
 DOMAIN="$1"
-OUTDIR="recon_$DOMAIN"
+mkdir -p "$HOME/Desktop/y0uss3ff/bug-hunting/targets/$DOMAIN"
+OUTDIR="$HOME/Desktop/y0uss3ff/bug-hunting/targets/$DOMAIN/recon_$DOMAIN" # Change this with your preferred output path
 TEMP="$OUTDIR/temp"
 WORDLIST="/usr/share/wordlists/SecLists/Discovery/DNS/best-dns-wordlist.txt" # Change this with the wordlist that you wish to use for brute forcing
 RESOLVERS="/usr/share/wordlists/SecLists/Discovery/DNS/resolvers/resolvers-trusted.txt" # Change this with resolvers txt file path
@@ -51,6 +52,13 @@ findomain -t "$DOMAIN" -u "$OUTDIR/findomain.txt"
 echo "[+] crt.sh"
 curl -s "https://crt.sh/?q=%25.$DOMAIN&output=json" \
 | jq -r '.[].name_value' | sed 's/\\n/\n/g' | grep -vF '*.' | sort -u > "$OUTDIR/crtsh.txt"
+crt.sh $DOMAIN
+mv "$HOME/result_directory/$DOMAIN.crt.txt" "$TEMP/crtsh.txt"
+cat "$TEMP/crtsh.txt" \
+| tr '[:upper:]' '[:lower:]' \
+| sed -E 's#https?://##g; s#\*\.##g; s#^[^@]*@##g#' \
+| grep -Eo "([a-z0-9-]+\.)+$DOMAIN" \
+| sort -u > "$OUTDIR/crtsh.txt"
 
 echo "[+] github-subdomains"
 github-subdomains -d "$DOMAIN" -t "$github_token" -o "$OUTDIR/github-subdomains.txt"
@@ -83,7 +91,6 @@ puredns resolve "$TEMP/perms.txt" -r "$TEMP/final_resolvers.txt" > "$OUTDIR/reso
 
 echo "[+] Combining results"
 cat "$OUTDIR"/*.txt | sort -u > "$OUTDIR/all_subs.txt"
-rm "$OUTDIR/resolved_perms.txt" "$OUTDIR/found_subs.txt"
 
 echo "[+] Recursive enumeration"
 > "$OUTDIR/passive_recursive.txt"
@@ -127,5 +134,10 @@ rm "$OUTDIR/masscan.gnmap"
 
 echo "[+] Probing discovered ports with httpx"
 httpx -l "$OUTDIR/ip_ports.txt" -silent -title -status-code -tech-detect -server > "$OUTDIR/alive_nonstandard_ports.txt"
+
+echo "[+] Testing for subdomain takeover"
+subzy run --targets "$OUTDIR/final_subdomains.txt" --output "$OUTDIR/subzy-takeovers.json"
+
+nuclei -l "$OUTDIR/final_subdomains.txt" -t "$HOME/nuclei-templates/dns/detect-all-takeovers.yaml" -o "$OUTDIR/nuclei-takeovers.txt"
 
 echo "Recon finished for $DOMAIN"
