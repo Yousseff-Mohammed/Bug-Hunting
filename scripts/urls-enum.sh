@@ -7,7 +7,7 @@ if [ -z "$1" ]; then
 fi
 
 DOMAIN="$1"
-SUBDOMAINSDIR="recon_$DOMAIN"
+SUBDOMAINSDIR="$HOME/Desktop/y0uss3ff/bug-hunting/targets/$DOMAIN/recon_$DOMAIN" # Change this with the path of your subdomains
 
 HTTPX_FILE="$SUBDOMAINSDIR/alive_httpx.txt"
 if [ ! -f "$HTTPX_FILE" ]; then
@@ -20,7 +20,7 @@ if [ -z "$github_token" ]; then
     exit 1
 fi
 
-OUTDIR="recon_urls_$DOMAIN"
+OUTDIR="$HOME/Desktop/y0uss3ff/bug-hunting/targets/$DOMAIN/recon_urls_$DOMAIN" # Change this with the path you wish to have the output in
 mkdir -p "$OUTDIR"
 mkdir -p "$OUTDIR/temp"
 
@@ -56,11 +56,16 @@ echo "[+] gospider"
 gospider -S "$OUTDIR/temp/live_urls.txt" -d 2 -c 10 -t 10 --other-source --include-subs -o "$OUTDIR/gospider"
 cat "$OUTDIR/gospider"/* > "$OUTDIR/all_gospider_output.txt"
 
+DOMAIN_ESCAPED=$(printf '%s\n' "$DOMAIN" | sed 's/\./\\./g')
+
 grep -oE 'https?://[^ ]+' "$OUTDIR/all_gospider_output.txt" \
 | sed 's/[")>\]]*$//' \
+| tr '[:upper:]' '[:lower:]' \
+| grep -E "^https?://([a-z0-9-]+\.)*$DOMAIN_ESCAPED(/|$)" \
 | grep -Ev 'github\.com|reactjs\.org|w3\.org' \
 | grep -Ev '/(DD|MM|YYYY|text|application)/' \
 | sort -u > "$OUTDIR/gospider.txt"
+
 rm -rf "$OUTDIR/gospider/" "$OUTDIR/all_gospider_output.txt"
 
 echo "[+] Combining URLs"
@@ -102,6 +107,8 @@ END {
         if(!del[i]) print buf[i]
 }
 ' "$OUTDIR/js_endpoints.txt" > "$OUTDIR/js_endpoints_clean.txt"
+
+rm "$OUTDIR/js_endpoints.txt"
 
 echo "[+] Secret hunting from JS (Mantra)"
 cat "$OUTDIR/js_urls.txt" | mantra > "$OUTDIR/mantra_secrets.txt"
